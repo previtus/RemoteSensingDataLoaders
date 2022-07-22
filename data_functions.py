@@ -75,12 +75,12 @@ import numpy as np
 import pandas as pd
 import math
 
-class DataNormalizer():
+class DataNormalizerMinMax():
 
     def __init__(self, settings):
-        self.settings_dataset = settings.dataset
-        self.settings_dataloader = settings.dataloader
-
+        self.settings_dataset = settings["dataset"]
+        self.settings_dataloader = settings["dataloader"]
+        self.normalization_parameters = None
         """
         TileDatasets hold descriptors and select only some bands
 
@@ -96,11 +96,13 @@ class DataNormalizer():
         pass
 
     def setup(self, data_module):
-        if self.settings_dataset.normalization_precalculated_file is not "":
-            self.load_normalization_parameters(self.settings_dataset.normalization_precalculated_file)
+        if self.settings_dataset["normalization_precalculated_file"] is not "":
+            self.load_normalization_parameters(self.settings_dataset["normalization_precalculated_file"])
 
     def normalize_x(self, x, nan_to_zero = True):
         norm_params = self.normalization_parameters
+        if norm_params is None:
+            return x
         
         # nan_value = -9999.0
         # x[x <= nan_value] = np.nan
@@ -119,7 +121,9 @@ class DataNormalizer():
 
     def denormalize_x(self, x):
         norm_params = self.normalization_parameters
-        
+        if norm_params is None:
+            return x
+
         bands = x.shape[0]
         for band_idx in range(bands):
             a_min, b_max = norm_params[band_idx]
@@ -177,7 +181,7 @@ class DataNormalizer():
 
         x = x.numpy()
 
-        print("debug for normalizer")
+        print("debug for normalizer (DataNormalizerMinMax)")
         print("[x]")
 
         explore_idx = 0
@@ -211,6 +215,162 @@ class DataNormalizer():
 
         print("")
         
+class DataNormalizerLogManual():
+
+    def __init__(self, settings):
+        self.settings_dataset = settings["dataset"]
+        self.settings_dataloader = settings["dataloader"]
+        self.normalization_parameters = None
+
+    def setup(self, data_module):
+        self.BANDS_S2_BRIEF = ["B1","B2","B3","B4","B5","B6","B7","B8","B8A","B9","B10","B11","B12"]
+        self.RESCALE_PARAMS = {
+            "B1" : {  "x0": 7.3,
+                      "x1": 7.6,
+                      "y0": -1,
+                      "y1": 1,
+            },
+            "B2" : {  "x0": 6.9,
+                      "x1": 7.5,
+                      "y0": -1,
+                      "y1": 1,
+            },
+            "B3" : {  "x0": 6.5,
+                      "x1": 7.4,
+                      "y0": -1,
+                      "y1": 1,
+            },
+            "B4" : {  "x0": 6.2,
+                      "x1": 7.5,
+                      "y0": -1,
+                      "y1": 1,
+            },
+            "B5" : {  "x0": 6.1,
+                      "x1": 7.5,
+                      "y0": -1,
+                      "y1": 1,
+            },
+            "B6" : {  "x0": 6.5,
+                      "x1": 8,
+                      "y0": -1,
+                      "y1": 1,
+            },
+            "B7" : {  "x0": 6.5,
+                      "x1": 8,
+                      "y0": -1,
+                      "y1": 1,
+            },
+            "B8" : {  "x0": 6.5,
+                      "x1": 8,
+                      "y0": -1,
+                      "y1": 1,
+            },
+            "B8A" : { "x0": 6.5,
+                      "x1": 8,
+                      "y0": -1,
+                      "y1": 1,
+            },
+            "B9" : {  "x0": 6,
+                      "x1": 7,
+                      "y0": -1,
+                      "y1": 1,
+            },
+            "B10" : { "x0": 2.5,
+                      "x1": 4.5,
+                      "y0": -1,
+                      "y1": 1,
+            },
+            "B11" : { "x0": 6,
+                      "x1": 8,
+                      "y0": -1,
+                      "y1": 1,
+            },
+            "B12" : { "x0": 6,
+                      "x1": 8,
+                      "y0": -1,
+                      "y1": 1,
+            }
+        }
+
+
+    def normalize_x(self, data):
+        bands = data.shape[0] # for example 15  
+        for band_i in range(bands):
+            data_one_band = data[band_i,:,:]
+            if band_i < len(self.BANDS_S2_BRIEF):
+                # log
+                data_one_band = np.log(data_one_band)
+                data_one_band[np.isinf(data_one_band)] = np.nan
+
+                # rescale
+                r = self.RESCALE_PARAMS[self.BANDS_S2_BRIEF[band_i]]
+                x0,x1,y0,y1 = r["x0"], r["x1"], r["y0"], r["y1"] 
+                data_one_band = ((data_one_band - x0) / (x1 - x0)) * (y1 - y0) + y0
+            data[band_i,:,:] = data_one_band
+        return data
+
+
+
+    def denormalize_x(self, data):
+        bands = data.shape[0] # for example 15  
+        for band_i in range(bands):
+            data_one_band = data[band_i,:,:]
+            if band_i < len(self.BANDS_S2_BRIEF):
+
+                # rescale
+                r = self.RESCALE_PARAMS[self.BANDS_S2_BRIEF[band_i]]
+                x0,x1,y0,y1 = r["x0"], r["x1"], r["y0"], r["y1"] 
+                data_one_band = (((data_one_band - y0) / (y1 - y0)) * (x1 - x0)) + x0
+                
+                
+                # undo log
+                data_one_band = np.exp(data_one_band)
+                # data_one_band = np.log(data_one_band)
+                # data_one_band[np.isinf(data_one_band)] = np.nan
+
+            data[band_i,:,:] = data_one_band
+        return data
+
+
+    def debug(self, x, normalized=True):
+        # if normalized -> show denormalization and then back normalization
+
+        x = x.numpy()
+
+        print("debug for normalizer (DataNormalizerLogManual)")
+        print("[x]")
+
+        explore_idx = 0
+        ex = x[explore_idx].flatten()
+        print("before", np.nanmin(ex), np.nanmax(ex), np.nanmean(ex))
+
+        if normalized:
+            print("was normalized, will denormalize and go back")
+            x_norm = np.copy(x)
+            x_denorm = self.denormalize_x(np.copy(x))
+            
+            ex = x_denorm[explore_idx].flatten()
+            print("denormalized", np.nanmin(ex), np.nanmax(ex), np.nanmean(ex))
+
+            x_backnorm = self.normalize_x(np.copy(x_denorm))
+            ex = x_backnorm[explore_idx].flatten()
+            print("normalized again", np.nanmin(ex), np.nanmax(ex), np.nanmean(ex))
+
+        else:
+            print("wasn't normalized, will normalize and go back to denormalized")
+
+            x_denorm = np.copy(x)
+            x_norm = self.normalize_x(np.copy(x))
+            
+            ex = x_norm[explore_idx].flatten()
+            print("normalized", np.nanmin(ex), np.nanmax(ex), np.nanmean(ex))
+
+            x_backdenorm = self.denormalize_x(np.copy(x_norm))
+            ex = x_backdenorm[explore_idx].flatten()
+            print("denormalized again", np.nanmin(ex), np.nanmax(ex), np.nanmean(ex))
+
+        print("")
+    
 # Torch Dataset:
 
 import numpy as np
@@ -225,7 +385,7 @@ class TileDataset(Dataset):
     # - Load useful statistics for its tiles (such as the number of plume pixels in the label)
     # - Filter itself using those statistics (example: keep valid tiles, or only tiles with plumes, etc...)
     # - Spawn filtered tiles (to later make train / test / val splits ...)
-    def __init__(self, tiles, settings_dataset, data_normalizer:DataNormalizer=None):
+    def __init__(self, tiles, settings_dataset, data_normalizer=None):
         self.tiles = tiles
         self.settings_dataset = settings_dataset
         self.data_normalizer = data_normalizer
@@ -253,7 +413,7 @@ import pytorch_lightning as pl
 
 class DataModule(pl.LightningDataModule):
 
-    def __init__(self, settings, data_normalizer:DataNormalizer):
+    def __init__(self, settings, data_normalizer):
         super().__init__()
         self.settings = settings
         self.data_normalizer = data_normalizer
@@ -283,9 +443,9 @@ class DataModule(pl.LightningDataModule):
 
         print("train, test, val:",len(tiles_train), len(tiles_test), len(tiles_val))
 
-        self.train_dataset = TileDataset(tiles_train, settings["dataset"], self.data_normalizer)
-        self.test_dataset = TileDataset(tiles_test, settings["dataset"], self.data_normalizer)
-        self.val_dataset = TileDataset(tiles_val, settings["dataset"], self.data_normalizer)
+        self.train_dataset = TileDataset(tiles_train, self.settings["dataset"], self.data_normalizer)
+        self.test_dataset = TileDataset(tiles_test, self.settings["dataset"], self.data_normalizer)
+        self.val_dataset = TileDataset(tiles_val, self.settings["dataset"], self.data_normalizer)
 
         self.setup_finished = True
 
@@ -314,9 +474,8 @@ class DataModule(pl.LightningDataModule):
         print("test", self.test_dataset.__len__(), " tiles")
         print("Sample data:")
 
-        if self.debug_normalizer_for_i_samples > 0:
-            for i in range(self.debug_normalizer_for_i_samples):
-                img = self.train_dataset[i]
-                print("x shapes:", img.size())
+        for i in range(5):
+            img = self.train_dataset[i]
+            print("x shapes:", img.size())
 
-                self.data_normalizer.debug(img, normalized=True)
+            self.data_normalizer.debug(img, normalized=True)
